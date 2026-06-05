@@ -60,7 +60,7 @@ def record_user(user_id, username, first_name):
 def cmd_start(message):
     record_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     welcome_text = (
-        "Welcome to *@randomTossBot*! 🎮\n"
+        "Welcome to *@flipxobot*! 🎮\n"
         "I can help you make instant random decisions.\n\n"
         "🪙 Flip Coin — /coin\n"
         "🎲 Roll Dice — /dice\n"
