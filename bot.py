@@ -1,13 +1,16 @@
 import os
 import time
 import secrets
+import hmac
+import hashlib
 import json
+import threading
 from datetime import datetime, timedelta
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ─────────────────────────────────────────
-#  CONFIGURATION
+#  CONFIGURATION & STORAGE
 # ─────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID  = int(os.environ.get("ADMIN_ID", 123456789))
@@ -36,44 +39,36 @@ stats = load_json(STATS_FILE, {
     "activity": {},
     "messages": []
 })
-# Make sure new keys exist
+
+# Ensure key structural integrity
 for k, v in {"head_count": 0, "tail_count": 0, "messages": []}.items():
     if k not in stats:
         stats[k] = v
 
-# ─────────────────────────────────────────
-#  BOT CONFIG
-# ─────────────────────────────────────────
 DEFAULT_CONFIG = {
     "welcome": (
-        "🔥 *PREMIUM COIN TOSS BOT* 🔥\n"
+        "✨ *WELCOME TO PREMIUM COIN TOSS* ✨\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👋 *Welcome!*\n\n"
-        "🪙 This bot uses a *100% Cryptographic Random*\n"
-        "engine — every toss is completely fair & unbiased!\n\n"
-        "📌 *Command:*\n"
-        "🔹 /flip — Toss the coin\n\n"
+        "👋 Welcome to the most secure flip arena!\n"
+        "Our cryptographic hash engine ensures pure randomness.\n\n"
+        "⚡ *Commands:*\n"
+        "👉 /flip — Toss the coin instantly\n"
+        "👉 /menu — Open interactive panel\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "👨‍💻 *Developer:* @{dev}"
     ),
     "help": (
-        "ℹ️ *HELP & GUIDE*\n"
+        "ℹ️ *HELP & CRYPTO FAIRNESS*\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "⚙️ *How to Play?*\n"
-        "• Type /flip command\n"
-        "• Wait 5 seconds while coin spins\n"
-        "• Get *HEAD* 🟡 or *TAIL* ⚪\n\n"
-        "🔐 *Why is it 100% Fair?*\n"
-        "• Uses Python `secrets` module\n"
-        "• Hardware-level OS entropy source\n"
-        "• Cryptographically secure — zero bias\n\n"
-        "📌 *Commands:*\n"
-        "🔹 /start — Main menu\n"
-        "🔹 /flip  — Toss coin\n\n"
+        "⚙️ *How to Play:*\n"
+        "• Type /flip to activate the wheel\n"
+        "• Wait 3 seconds for physical sync\n"
+        "• Get an un-rigged cryptographic outcome\n\n"
+        "🔐 *Fairness Metric:*\n"
+        "Every toss creates a discrete salt using system hardware entropy running on an HMAC-SHA256 frame.\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "⚡ *Powered by:* @{dev}"
     ),
-    "result_title": "🏆 *TOSS RESULT* 🏆",
     "dev_name": "supanz"
 }
 
@@ -87,17 +82,17 @@ def cfg(key):
     return bot_config[key].replace("{dev}", bot_config["dev_name"])
 
 # ─────────────────────────────────────────
-#  PURE RANDOM TOSS
+#  CRYPTO-SECURE RANDOM ENGINE
 # ─────────────────────────────────────────
-def fair_toss(user_id=None):
-    # secrets.token_bytes pulls directly from OS hardware entropy (/dev/urandom)
-    # Take 4 random bytes → integer → modulo 2
-    # No pattern, no streak tracking, no prediction possible
-    rand_int = int.from_bytes(secrets.token_bytes(4), "big")
-    return "HEAD" if rand_int % 2 == 0 else "TAIL"
+def fair_toss(user_id):
+    secret_key = secrets.token_bytes(32)
+    salt = f"{time.time_ns()}-{user_id}".encode('utf-8')
+    secure_hash = hmac.new(secret_key, salt, hashlib.sha256).hexdigest()
+    hash_int = int(secure_hash[-8:], 16)
+    return "HEAD" if hash_int % 2 == 0 else "TAIL"
 
 # ─────────────────────────────────────────
-#  STATS HELPERS
+#  ANALYTICS ENGINE
 # ─────────────────────────────────────────
 def record_user(user_id, username, first_name):
     uid = str(user_id)
@@ -143,42 +138,47 @@ def get_active_users(hours=24):
     return count
 
 # ─────────────────────────────────────────
-#  KEYBOARDS
+#  PREMIUM COMPONENT KEYBOARDS
 # ─────────────────────────────────────────
 def start_keyboard():
     kb = InlineKeyboardMarkup(row_width=1)
-    kb.add(InlineKeyboardButton("ℹ️  Help & Guide", callback_data="help"))
+    kb.add(InlineKeyboardButton("ℹ️  Explore Help & Systems", callback_data="help"))
     return kb
 
 def help_back_keyboard():
     kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("⬅️  Back to Menu", callback_data="home"))
+    kb.add(InlineKeyboardButton("⬅️  Return to Main Menu", callback_data="home"))
     return kb
 
 def admin_keyboard():
-    kb = InlineKeyboardMarkup(row_width=1)
+    kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
-        InlineKeyboardButton("📊  Stats & Users",        callback_data="adm_stats"),
-        InlineKeyboardButton("💬  Recent Messages",      callback_data="adm_messages"),
-        InlineKeyboardButton("📝  Edit Welcome Message", callback_data="adm_welcome"),
-        InlineKeyboardButton("ℹ️  Edit Help Message",    callback_data="adm_help"),
-        InlineKeyboardButton("🏆  Edit Result Title",    callback_data="adm_result_title"),
-        InlineKeyboardButton("👨‍💻  Edit Developer Name",  callback_data="adm_dev_name"),
-        InlineKeyboardButton("🗑️  Reset All Data",       callback_data="adm_reset_stats"),
-        InlineKeyboardButton("❌  Close Panel",          callback_data="adm_close"),
+        InlineKeyboardButton("📊 Analytics Stats",      callback_data="adm_stats"),
+        InlineKeyboardButton("💬 Msg Monitor",       callback_data="adm_messages"),
+    )
+    kb.add(
+        InlineKeyboardButton("📝 Change Welcome",       callback_data="adm_welcome"),
+        InlineKeyboardButton("ℹ️ Change Help",          callback_data="adm_help"),
+    )
+    kb.add(
+        InlineKeyboardButton("👨‍💻 Set Dev Alias",       callback_data="adm_dev_name"),
+    )
+    kb.add(
+        InlineKeyboardButton("🗑️ Factory Reset",       callback_data="adm_reset_stats"),
+        InlineKeyboardButton("❌ Exit Console",         callback_data="adm_close")
     )
     return kb
 
 def confirm_reset_keyboard():
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
-        InlineKeyboardButton("✅  Yes, Delete All", callback_data="adm_reset_confirm"),
-        InlineKeyboardButton("❌  Cancel",          callback_data="adm_back"),
+        InlineKeyboardButton("⚡ Confirm Destruction", callback_data="adm_reset_confirm"),
+        InlineKeyboardButton("❌ Retain Core",          callback_data="adm_back")
     )
     return kb
 
 # ─────────────────────────────────────────
-#  COMMANDS
+#  FRONTEND CORE COMMANDS
 # ─────────────────────────────────────────
 @bot.message_handler(commands=["start", "menu"])
 def cmd_start(message):
@@ -190,27 +190,38 @@ def cmd_start(message):
         reply_markup=start_keyboard(),
     )
 
+def process_flip_async(chat_id, message_id, user_id):
+    try:
+        time.sleep(1.0)
+        bot.edit_message_text("⏳ *Spinning... 2s*", chat_id=chat_id, message_id=message_id, parse_mode="Markdown")
+        time.sleep(1.0)
+        bot.edit_message_text("⏳ *Spinning... 1s*", chat_id=chat_id, message_id=message_id, parse_mode="Markdown")
+        time.sleep(1.0)
+        
+        outcome = fair_toss(user_id)
+        record_toss(outcome)
+        _edit_result(chat_id, message_id, outcome)
+    except Exception as e:
+        print(f"Threading Sync Error: {e}")
+
 @bot.message_handler(commands=["flip"])
 def cmd_flip(message):
     record_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     msg = bot.reply_to(
         message,
-        "⏳ *Toss In Progress...*\n_Please wait 5 seconds_",
+        "⏳ *Spinning... 3s*",
         parse_mode="Markdown",
     )
-    time.sleep(5.0)
-    outcome = fair_toss(message.from_user.id)
-    record_toss(outcome)
-    _edit_result(message.chat.id, msg.message_id, outcome)
+    threading.Thread(target=process_flip_async, args=(message.chat.id, msg.message_id, message.from_user.id)).start()
 
 @bot.message_handler(commands=["admin"])
 def cmd_admin(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ *Access Denied!*", parse_mode="Markdown")
+        bot.reply_to(message, "⚠️ *Security Alert:* Access Denied. Unauthorized terminal execution.", parse_mode="Markdown")
         return
     bot.reply_to(
         message,
-        "⚙️ *ADMIN PANEL*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nSelect an option below:",
+        "🛠️ *CONTROL OVERRIDE MODULE*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nSystem telemetry initialized. Manage core buffers below:",
         parse_mode="Markdown",
         reply_markup=admin_keyboard(),
     )
@@ -218,26 +229,18 @@ def cmd_admin(message):
 @bot.message_handler(commands=["resetall"])
 def cmd_resetall(message):
     if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ *Access Denied!*", parse_mode="Markdown")
         return
-    kb = InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        InlineKeyboardButton("✅  Yes, Delete All", callback_data="adm_reset_confirm"),
-        InlineKeyboardButton("❌  Cancel",          callback_data="adm_cancel_msg"),
-    )
     bot.reply_to(
         message,
-        "⚠️ *Are you sure?*\n\n"
-        "This will permanently delete:\n"
-        "• All user records\n"
-        "• All toss stats\n"
-        "• All message logs\n\n"
-        "_This action cannot be undone!_",
+        "⚠️ *DESTRUCTIVE DIRECTIVE DETECTED*\n\n"
+        "Confirm total database purging:\n"
+        "• Drops all system identity structures\n"
+        "• Wipes absolute historical calculations\n\n"
+        "_This instruction is non-reversible!_",
         parse_mode="Markdown",
-        reply_markup=kb,
+        reply_markup=confirm_reset_keyboard(),
     )
 
-# Log all non-command user messages
 @bot.message_handler(func=lambda m: not m.text.startswith("/"), content_types=["text"])
 def catch_messages(message):
     if message.from_user.id == ADMIN_ID:
@@ -250,17 +253,15 @@ def catch_messages(message):
     )
 
 # ─────────────────────────────────────────
-#  RESULT — clean, no buttons
+#  SAME TO SAME REQUESTED RESULT UI
 # ─────────────────────────────────────────
 def _edit_result(chat_id, message_id, outcome):
     emoji = "🟡" if outcome == "HEAD" else "⚪"
+        
     text = (
-        f"{cfg('result_title')}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"{emoji}  *Result:*  `{outcome}`\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👨‍💻 *Dev:* @{bot_config['dev_name']}\n\n"
-        f"_Use /flip to toss again_"
+        f"🪙 *Result:* `{outcome}` {emoji}\n"
+        f"👨‍💻 *Developer:* @{bot_config['dev_name']}\n\n"
+        f"Play again use /flip"
     )
     bot.edit_message_text(
         chat_id=chat_id,
@@ -270,32 +271,7 @@ def _edit_result(chat_id, message_id, outcome):
     )
 
 # ─────────────────────────────────────────
-#  EDIT EXAMPLES — shown to admin
-# ─────────────────────────────────────────
-EDIT_EXAMPLES = {
-    "welcome": (
-        "🔥 *MY TOSS BOT* 🔥\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👋 *Welcome!*\n\n"
-        "🪙 Fair random coin toss!\n\n"
-        "📌 /flip — Toss the coin\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "👨‍💻 *Developer:* @{dev}"
-    ),
-    "help": (
-        "ℹ️ *HELP*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "• /flip — Toss coin\n"
-        "• Wait 5 sec → get result\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "⚡ *Powered by:* @{dev}"
-    ),
-    "result_title": "🏆 *COIN RESULT* 🏆",
-    "dev_name":     "yournamehere"
-}
-
-# ─────────────────────────────────────────
-#  CALLBACKS
+#  INTERACTIVE CONTROLLER (CALLBACKS)
 # ─────────────────────────────────────────
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
@@ -303,7 +279,6 @@ def handle_callbacks(call):
     mid = call.message.message_id
     uid = call.from_user.id
 
-    # ── USER ──────────────────────────────
     if call.data == "home":
         bot.answer_callback_query(call.id)
         bot.edit_message_text(
@@ -324,30 +299,26 @@ def handle_callbacks(call):
         )
         return
 
-    # ── ADMIN ─────────────────────────────
-    if not (call.data.startswith("adm_") or call.data == "adm_cancel_msg"):
+    # Protect Admin Functions
+    if not (call.data.startswith("adm_") or call.data == "adm_reopen"):
         return
 
     if uid != ADMIN_ID:
-        bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ Critical: Identity Mismatch!", show_alert=True)
         return
 
     bot.answer_callback_query(call.id)
 
-    # Close panel
     if call.data == "adm_close":
         bot.delete_message(cid, mid)
 
-    # Back to panel
-    elif call.data in ("adm_back", "adm_cancel_msg"):
-        bot.edit_message_text(
-            chat_id=cid, message_id=mid,
-            text="⚙️ *ADMIN PANEL*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nSelect an option below:",
-            parse_mode="Markdown",
-            reply_markup=admin_keyboard(),
-        )
+    elif call.data in ("adm_back", "adm_reopen"):
+        text = "🛠️ *CONTROL OVERRIDE MODULE*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nSystem telemetry initialized. Manage core buffers below:"
+        if call.data == "adm_reopen":
+            bot.send_message(cid, text, parse_mode="Markdown", reply_markup=admin_keyboard())
+        else:
+            bot.edit_message_text(chat_id=cid, message_id=mid, text=text, parse_mode="Markdown", reply_markup=admin_keyboard())
 
-    # Stats
     elif call.data == "adm_stats":
         total   = len(stats["total_users"])
         active  = get_active_users(24)
@@ -366,69 +337,54 @@ def handle_callbacks(call):
                 uname = data.get("username", "")
                 name  = data.get("name", "Unknown")
                 recent_lines.append(f"  • {name}" + (f" (@{uname})" if uname else ""))
-        recent_str = "\n".join(recent_lines) if recent_lines else "  _None yet_"
+        recent_str = "\n".join(recent_lines) if recent_lines else "  _Matrix Clean_"
 
         text = (
-            "📊 *BOT STATISTICS*\n"
+            "⚙️ *CORE TELEMETRY LOGS*\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👥  *Total Users:*        `{total}`\n"
-            f"🟢  *Active (Last 24h):*  `{active}`\n"
-            f"🪙  *Total Tosses:*       `{tosses}`\n"
-            f"🟡  *HEAD Results:*       `{heads}` ({h_pct}%)\n"
-            f"⚪  *TAIL Results:*       `{tails}` ({t_pct}%)\n"
-            f"💬  *Messages Logged:*    `{msgs}`\n\n"
-            f"👤 *Recent Users:*\n{recent_str}\n\n"
+            f"📈 *Core Registrations:* `{total}` metrics\n"
+            f"🟢 *Active Pings (24h):* `{active}` nodes\n"
+            f"🪙 *Absolute Runs:* `{tosses}` generations\n"
+            f" ├ 🟡 *Heads:* `{heads}` ({h_pct}%)\n"
+            f" └ ⚪ *Tails:* `{tails}` ({t_pct}%)\n"
+            f"💬 *Buffer Capture:* `{msgs}` strings\n\n"
+            f"📡 *Latest Connection Intercepts:*\n{recent_str}\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━"
         )
-        back_kb = InlineKeyboardMarkup()
-        back_kb.add(InlineKeyboardButton("⬅️  Back", callback_data="adm_back"))
-        bot.edit_message_text(
-            chat_id=cid, message_id=mid,
-            text=text, parse_mode="Markdown",
-            reply_markup=back_kb,
-        )
+        back_kb = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Return to Console", callback_data="adm_back"))
+        bot.edit_message_text(chat_id=cid, message_id=mid, text=text, parse_mode="Markdown", reply_markup=back_kb)
 
-    # Recent messages
     elif call.data == "adm_messages":
         messages = stats.get("messages", [])
         if not messages:
-            text = "💬 *Recent Messages*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n_No messages yet._"
+            text = "💬 *BUFFER MONITORING*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n_System queue empty._"
         else:
             lines = []
             for m in messages[-10:]:
                 uname = f"@{m['username']}" if m.get("username") else m.get("name", "Unknown")
-                txt   = m["text"][:60] + ("..." if len(m["text"]) > 60 else "")
-                lines.append(f"👤 *{uname}:*\n_{txt}_")
+                txt   = m["text"][:50] + ("..." if len(m["text"]) > 50 else "")
+                lines.append(f"📡 *{uname}* ➜ ` {txt} `")
             text = (
-                "💬 *Recent Messages (Last 10)*\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                + "\n\n".join(lines)
+                "💬 *STREAM BUFFER CAPTURE (Last 10)*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n" + "\n".join(lines)
             )
-        back_kb = InlineKeyboardMarkup()
-        back_kb.add(InlineKeyboardButton("⬅️  Back", callback_data="adm_back"))
-        bot.edit_message_text(
-            chat_id=cid, message_id=mid,
-            text=text, parse_mode="Markdown",
-            reply_markup=back_kb,
-        )
+        back_kb = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Return to Console", callback_data="adm_back"))
+        bot.edit_message_text(chat_id=cid, message_id=mid, text=text, parse_mode="Markdown", reply_markup=back_kb)
 
-    # Reset confirm dialog
     elif call.data == "adm_reset_stats":
         bot.edit_message_text(
             chat_id=cid, message_id=mid,
             text=(
-                "⚠️ *Are you sure?*\n\n"
-                "This will permanently delete:\n"
-                "• All user records\n"
-                "• All toss stats\n"
-                "• All message logs\n\n"
-                "_This action cannot be undone!_"
+                "⚠️ *DESTRUCTIVE DIRECTIVE DETECTED*\n\n"
+                "Confirm total database purging:\n"
+                "• Drops all system identity structures\n"
+                "• Wipes absolute historical calculations\n\n"
+                "_This instruction is non-reversible!_"
             ),
             parse_mode="Markdown",
             reply_markup=confirm_reset_keyboard(),
         )
 
-    # Do the reset
     elif call.data == "adm_reset_confirm":
         stats["total_users"]  = []
         stats["total_tosses"] = 0
@@ -439,76 +395,50 @@ def handle_callbacks(call):
         save_json(STATS_FILE, stats)
         bot.edit_message_text(
             chat_id=cid, message_id=mid,
-            text="✅ *All data has been reset successfully!*",
+            text="✅ *Database drop executed successfully. System state: Clean.*",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup().add(
-                InlineKeyboardButton("⬅️  Back to Panel", callback_data="adm_back")
-            ),
+            reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("⚙️ Open Console", callback_data="adm_back")),
         )
 
-    # Edit fields
     else:
         key_map = {
-            "adm_welcome":      ("welcome",      "Welcome Message"),
-            "adm_help":         ("help",         "Help Message"),
-            "adm_result_title": ("result_title", "Result Title"),
-            "adm_dev_name":     ("dev_name",     "Developer Name"),
+            "adm_welcome":  ("welcome", "Welcome Message Block"),
+            "adm_help":     ("help", "Help Matrix Layout"),
+            "adm_dev_name": ("dev_name", "Developer Identity Alias"),
         }
-        entry = key_map.get(call.data)
-        if not entry:
-            return
-        target, label = entry
+        target, label = key_map[call.data]
         current = bot_config.get(target, "")
-        example = EDIT_EXAMPLES.get(target, "")
 
         prompt = bot.send_message(
             cid,
-            f"✍️ *Editing:* `{label}`\n"
+            f"📝 *OVERWRITE MODULE:* `{label}`\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"📋 *Current value:*\n{current[:200]}\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💡 *Example to copy:*\n`{example}`\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⬇️ *Send your new text now:*",
+            f"📥 *Current Buffer State:*\n`{current[:150]}`\n\n"
+            f"💬 Send the completely raw text asset to override this configuration packet:",
             parse_mode="Markdown",
         )
         bot.register_next_step_handler(prompt, _save_setting, target, label)
 
 # ─────────────────────────────────────────
-#  ADMIN SAVE SETTING
+#  ADMIN CONTROL FLOW MUTATOR
 # ─────────────────────────────────────────
 def _save_setting(message, key, label):
     if message.from_user.id != ADMIN_ID:
         return
     bot_config[key] = message.text
     save_json(CONFIG_FILE, bot_config)
-    preview = message.text[:300] + ("..." if len(message.text) > 300 else "")
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("⚙️  Open Admin Panel", callback_data="adm_reopen"))
+    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("⚙️ Re-open Master Console", callback_data="adm_reopen"))
     bot.reply_to(
         message,
-        f"✅ *{label} updated successfully!*\n\n"
-        f"📋 *Saved value:*\n{preview}",
+        f"✅ *State Saved!* Config sector `{label}` synchronized successfully.",
         parse_mode="Markdown",
         reply_markup=kb,
     )
 
-@bot.callback_query_handler(func=lambda c: c.data == "adm_reopen")
-def reopen_admin(call):
-    if call.from_user.id != ADMIN_ID:
-        return
-    bot.answer_callback_query(call.id)
-    bot.send_message(
-        call.message.chat.id,
-        "⚙️ *ADMIN PANEL*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nSelect an option below:",
-        parse_mode="Markdown",
-        reply_markup=admin_keyboard(),
-    )
-
 # ─────────────────────────────────────────
-#  RUN
+#  POLLING BOOT LOADER
 # ─────────────────────────────────────────
 if __name__ == "__main__":
-    print("✅ Secure Coin Toss Bot is running...")
+    print("🚀 System Online. Bot execution thread started.")
     bot.infinity_polling()
-    
+                     
