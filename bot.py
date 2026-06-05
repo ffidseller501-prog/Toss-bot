@@ -2,85 +2,69 @@ import os
 import time
 import random
 import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Environment Variables for Railway (No token leak in code)
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-# Agar testing ke liye local run karna ho toh ADMIN_ID direct numeric daal sakte hain
-ADMIN_ID = int(os.environ.get("ADMIN_ID", 123456789))  
+ADMIN_ID = int(os.environ.get("ADMIN_ID", 123456789))
 DEVELOPER_USERNAME = os.environ.get("DEVELOPER_USERNAME", "supanz")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Live Customizable Messages
-bot_messages = {
-    "start": "👋 *Welcome to Coin Toss Bot!*\n\nUse `/flip` command to toss the coin instantly.\n\n👨‍💻 *Developer:* @{dev}",
-    "help": "ℹ️ *Bot Help Menu*\n\n📌 `/start` - Start the bot\n📌 `/flip` - Toss the coin (5 seconds processing)\n📌 `/help` - Show this help menu\n\n⚡ Powered by @{dev}",
-    "result_title": "⚡ *COIN TOSS RESULT* ⚡"
+# Dynamic Storage
+settings = {
+    "welcome": "🔥 **WELCOME TO THE PREMIUM TOSS SYSTEM** 🔥",
+    "help": "ℹ️ **BOT HELP & OFFICIAL GUIDE**",
+    "result_title": "🏆 **TOSS BOT RESULT** 🏆"
 }
 
-# --- BASIC COMMANDS ---
+# --- KEYBOARD ---
+def get_main_menu():
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("🪙 FLIP COIN", callback_data="flip"))
+    markup.add(InlineKeyboardButton("ℹ️ HELP", callback_data="help"))
+    return markup
 
+# --- COMMANDS ---
 @bot.message_handler(commands=['start'])
-def command_start(message):
-    text = bot_messages["start"].format(dev=DEVELOPER_USERNAME)
-    bot.reply_to(message, text, parse_mode="Markdown")
+def start(message):
+    markup = get_main_menu()
+    bot.reply_to(message, f"{settings['welcome']}\n\n👉 **Click below to play:**", parse_mode="Markdown", reply_markup=markup)
 
-@bot.message_handler(commands=['help'])
-def command_help(message):
-    text = bot_messages["help"].format(dev=DEVELOPER_USERNAME)
-    bot.reply_to(message, text, parse_mode="Markdown")
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    if call.data == "flip":
+        # Processing 1-line
+        msg = bot.edit_message_text("⏳ **Toss In Processing... Please Wait 5sec**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        time.sleep(5)
+        res = random.choice(['HEAD', 'TAIL'])
+        emoji = "🟡" if res == "HEAD" else "⚪"
+        
+        final = f"{settings['result_title']}\n───────────────────\n{emoji} **Result:** `{res}`\n───────────────────\n👨‍💻 **Dev:** @{DEVELOPER_USERNAME}"
+        bot.edit_message_text(final, call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🔄 FLIP AGAIN", callback_data="flip")))
 
-# --- THE MAIN FLIP PROCESS WITH DIRECT REPLY ---
+    elif call.data == "help":
+        bot.edit_message_text(f"{settings['help']}\n\n👉 **Use /flip to start.**", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ BACK", callback_data="back")))
+    
+    elif call.data == "back":
+        bot.edit_message_text(f"{settings['welcome']}\n\n👉 **Click below to play:**", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=get_main_menu())
 
-@bot.message_handler(commands=['flip'])
-def command_flip(message):
-    processing_text = (
-        "⚙️ *Toss In Processing... Please Wait 5sec*\n"
-        "🔄 _System is flipping the coin randomly_ `[ 💿 ]`"
-    )
-    
-    # 1. Sends processing text as a direct reply to user's message
-    msg = bot.reply_to(message, processing_text, parse_mode="Markdown")
-    
-    # 2. Strict 5 seconds wait
-    time.sleep(5.0)
-    
-    # 3. Generate random result
-    result = random.choice(['HEAD', 'TAIL'])
-    
-    final_text = (
-        f"{bot_messages['result_title']}\n"
-        f"───────────────────\n"
-        f"🎯 *Result:* `{result}`\n"
-        f"───────────────────\n"
-        f"👨‍💻 *Developer:* @{DEVELOPER_USERNAME}"
-    )
-    
-    # 4. Edits that specific reply message into final result
-    bot.edit_message_text(
-        chat_id=message.chat.id,
-        message_id=msg.message_id,
-        text=final_text,
-        parse_mode="Markdown"
-    )
-
-# --- ADMIN PANEL ---
-
+# --- ADMIN PANEL (The "OP" Feature) ---
 @bot.message_handler(commands=['admin'])
-def admin_panel(message):
+def admin(message):
     if message.from_user.id == ADMIN_ID:
-        msg = bot.reply_to(message, "⚙️ *Admin Mode:* Send me the new *Result Title* text:", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, save_admin_title)
-    else:
-        bot.reply_to(message, "❌ Access Denied.", parse_mode="Markdown")
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("📝 Edit Welcome", callback_data="edit_welcome"),
+                   InlineKeyboardButton("🏆 Edit Result Title", callback_data="edit_result"))
+        bot.reply_to(message, "⚙️ **ADMIN PANEL**", reply_markup=markup)
 
-def save_admin_title(message):
-    if message.from_user.id == ADMIN_ID:
-        bot_messages["result_title"] = message.text
-        bot.reply_to(message, "✅ *Result title updated successfully!*", parse_mode="Markdown")
+@bot.callback_query_handler(func=lambda call: call.data.startswith('edit_'))
+def edit_logic(call):
+    key = call.data.split('_')[1]
+    msg = bot.send_message(call.message.chat.id, f"✍️ **Enter new text for {key}:**")
+    bot.register_next_step_handler(msg, lambda m: save_setting(m, key))
 
-# Run Connection
-if __name__ == "__main__":
-    print("[SYSTEM] Super Simple Coin Toss Bot is active on Production...")
-    bot.infinity_polling()
-  
+def save_setting(message, key):
+    settings[key if key == 'welcome' else 'result_title'] = message.text
+    bot.reply_to(message, "✅ **Saved!**")
+
+bot.infinity_polling()
