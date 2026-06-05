@@ -4,6 +4,7 @@ import hmac
 import hashlib
 import json
 import telebot
+from datetime import datetime, date
 
 # ─────────────────────────────────────────
 #  CONFIGURATION & STORAGE
@@ -13,6 +14,9 @@ ADMIN_ID  = int(os.environ.get("ADMIN_ID", 123456789))
 
 bot = telebot.TeleBot(BOT_TOKEN)
 STATS_FILE = "stats.json"
+STREAK_FILE = "streaks.json"
+
+_rng = secrets.SystemRandom()
 
 def load_json(path, default):
     try:
@@ -32,8 +36,10 @@ stats = load_json(STATS_FILE, {
     "messages": []
 })
 
+streaks = load_json(STREAK_FILE, {})
+
 # ─────────────────────────────────────────
-#  CRYPTO-SECURE RANDOM ENGINE
+#  CRYPTO-SECURE RANDOM ENGINE (COIN UNCHANGED)
 # ─────────────────────────────────────────
 def generate_secure_random(user_id, max_val):
     secret_key = secrets.token_bytes(32)
@@ -42,6 +48,68 @@ def generate_secure_random(user_id, max_val):
     hash_int = int(secure_hash[-8:], 16)
     return hash_int % max_val
 
+# ─────────────────────────────────────────
+#  TRUE RANDOM ENGINE (DICE, SPIN, LUCKY, LIST, RPS)
+# ─────────────────────────────────────────
+def true_random(max_val):
+    return _rng.randint(0, max_val - 1)
+
+# ─────────────────────────────────────────
+#  STREAK SYSTEM
+# ─────────────────────────────────────────
+def update_streak(user_id, command):
+    uid = str(user_id)
+    today = str(date.today())
+
+    if uid not in streaks:
+        streaks[uid] = {}
+
+    user_streaks = streaks[uid]
+
+    if command not in user_streaks:
+        user_streaks[command] = {
+            "current": 1,
+            "best": 1,
+            "last_date": today
+        }
+    else:
+        last = user_streaks[command].get("last_date", "")
+        current = user_streaks[command].get("current", 0)
+        best = user_streaks[command].get("best", 0)
+
+        last_date_obj = datetime.strptime(last, "%Y-%m-%d").date() if last else None
+        today_obj = date.today()
+
+        if last_date_obj == today_obj:
+            # Already played today, no streak change
+            save_json(STREAK_FILE, streaks)
+            return user_streaks[command]["current"], user_streaks[command]["best"]
+
+        diff = (today_obj - last_date_obj).days if last_date_obj else 999
+
+        if diff == 1:
+            current += 1
+        else:
+            current = 1
+
+        best = max(best, current)
+        user_streaks[command] = {
+            "current": current,
+            "best": best,
+            "last_date": today
+        }
+
+    save_json(STREAK_FILE, streaks)
+    return user_streaks[command]["current"], user_streaks[command]["best"]
+
+def streak_text(user_id, command):
+    current, best = update_streak(user_id, command)
+    fire = "🔥" * min(current, 5)
+    return f"\n{fire} Streak: *{current} day(s)* | Best: *{best}*"
+
+# ─────────────────────────────────────────
+#  USER RECORDING
+# ─────────────────────────────────────────
 def record_user(user_id, username, first_name):
     uid = str(user_id)
     if uid not in stats["total_users"]:
@@ -53,7 +121,7 @@ def record_user(user_id, username, first_name):
     save_json(STATS_FILE, stats)
 
 # ─────────────────────────────────────────
-#  FRONTEND CORE COMMANDS (UNIQUE SIMPLE STYLE)
+#  COMMANDS
 # ─────────────────────────────────────────
 
 @bot.message_handler(commands=["start", "menu"])
@@ -71,7 +139,7 @@ def cmd_start(message):
     )
     bot.reply_to(message, welcome_text, parse_mode="Markdown")
 
-# --- COIN FLIP ---
+# --- COIN FLIP (COMPLETELY UNCHANGED) ---
 @bot.message_handler(commands=["flip", "coin"])
 def cmd_flip(message):
     record_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
@@ -84,36 +152,35 @@ def cmd_flip(message):
 @bot.message_handler(commands=["dice"])
 def cmd_dice(message):
     record_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
-    num = generate_secure_random(message.from_user.id, 6) + 1
-    bot.reply_to(message, f"🎲 Cube rolled: *{num}*", parse_mode="Markdown")
+    num = true_random(6) + 1
+    s = streak_text(message.from_user.id, "dice")
+    bot.reply_to(message, f"🎲 Cube rolled: *{num}*{s}", parse_mode="Markdown")
 
-# --- SPIN WHEEL (NEW) ---
+# --- SPIN WHEEL ---
 @bot.message_handler(commands=["spin"])
 def cmd_spin(message):
     record_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     zones = ["Zone A", "Zone B", "Zone C", "Zone D", "Jackpot 🌟"]
-    chosen_zone = zones[generate_secure_random(message.from_user.id, len(zones))]
-    bot.reply_to(message, f"🎡 Wheel landed on: *{chosen_zone}*", parse_mode="Markdown")
+    chosen_zone = zones[true_random(len(zones))]
+    s = streak_text(message.from_user.id, "spin")
+    bot.reply_to(message, f"🎡 Wheel landed on: *{chosen_zone}*{s}", parse_mode="Markdown")
 
-# --- LUCKY NUMBER (NEW) ---
+# --- LUCKY NUMBER ---
 @bot.message_handler(commands=["lucky"])
 def cmd_lucky(message):
     record_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
-    lucky_num = generate_secure_random(message.from_user.id, 10) # 0 to 9
-    bot.reply_to(message, f"🔢 Your lucky digit: *{lucky_num}*", parse_mode="Markdown")
+    lucky_num = true_random(10)
+    s = streak_text(message.from_user.id, "lucky")
+    bot.reply_to(message, f"🔢 Your lucky digit: *{lucky_num}*{s}", parse_mode="Markdown")
 
 # --- ITEM PICKER FROM LIST ---
 @bot.message_handler(commands=["list"])
 def cmd_list(message):
     record_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     raw_text = message.text[5:].strip()
-    
+
     if not raw_text:
-        error_msg = (
-            "⚠️ Invalid Input Format.\n"
-            "Please use: /list Item1, Item2, Item3"
-        )
-        bot.reply_to(message, error_msg, parse_mode="Markdown")
+        bot.reply_to(message, "⚠️ Invalid Input Format.\nPlease use: /list Item1, Item2, Item3", parse_mode="Markdown")
         return
 
     items = [item.strip() for item in raw_text.split(",") if item.strip()]
@@ -121,19 +188,21 @@ def cmd_list(message):
         bot.reply_to(message, "Please use: /list Item1, Item2, ...")
         return
 
-    chosen_index = generate_secure_random(message.from_user.id, len(items))
-    bot.reply_to(message, f"📋 Picked from list: *{items[chosen_index]}*", parse_mode="Markdown")
+    chosen = items[true_random(len(items))]
+    s = streak_text(message.from_user.id, "list")
+    bot.reply_to(message, f"📋 Picked from list: *{chosen}*{s}", parse_mode="Markdown")
 
 # --- ROCK PAPER SCISSORS ---
 @bot.message_handler(commands=["rps"])
 def cmd_rps(message):
     record_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     choices = ["Rock", "Paper", "Scissors"]
-    chosen = choices[generate_secure_random(message.from_user.id, 3)]
-    bot.reply_to(message, f"⚔️ Weapon chosen: *{chosen}*", parse_mode="Markdown")
+    chosen = choices[true_random(3)]
+    s = streak_text(message.from_user.id, "rps")
+    bot.reply_to(message, f"⚔️ Weapon chosen: *{chosen}*{s}", parse_mode="Markdown")
 
 # ─────────────────────────────────────────
-#  ADMIN MODULE
+#  ADMIN MODULE (UNCHANGED)
 # ─────────────────────────────────────────
 @bot.message_handler(commands=["admin"])
 def cmd_admin(message):
@@ -156,4 +225,3 @@ def handle_callbacks(call):
 
 if __name__ == "__main__":
     bot.infinity_polling()
-                
