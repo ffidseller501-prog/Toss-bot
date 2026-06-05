@@ -87,20 +87,43 @@ def cfg(key):
     return bot_config[key].replace("{dev}", bot_config["dev_name"])
 
 # ─────────────────────────────────────────
-#  TRUE RANDOM — extra entropy mix
+#  SMART TOSS — anti-streak per user
 # ─────────────────────────────────────────
-def fair_toss():
+# Tracks last 2 results per user in memory
+user_streak = {}  # { user_id: ["HEAD", "HEAD"] }
+
+def fair_toss(user_id=None):
     """
-    Mix multiple entropy sources for maximum fairness:
-    1. secrets.randbits(32)  — OS hardware entropy
-    2. time.perf_counter_ns() — nanosecond timer
-    XOR both together then check last bit → HEAD or TAIL
-    Mathematically perfect 50/50.
+    Base: cryptographic random (hardware entropy XOR nanosecond timer).
+    Anti-streak: if same result came 2 times in a row for this user,
+    boost the opposite side to 70% — feels natural, not robotic.
+    Single repeat (H then T or T then H) = pure 50/50.
     """
-    hw_random  = secrets.randbits(32)
-    time_noise = int(time.perf_counter_ns()) & 0xFFFFFFFF
-    mixed      = hw_random ^ time_noise
-    return "HEAD" if (mixed & 1) == 0 else "TAIL"
+    uid = str(user_id) if user_id else "global"
+    history = user_streak.get(uid, [])
+
+    # Pure random base
+    hw   = secrets.randbits(32)
+    ns   = int(time.perf_counter_ns()) & 0xFFFFFFFF
+    base = (hw ^ ns) % 100  # 0-99
+
+    # If last 2 were same → anti-streak kicks in
+    if len(history) >= 2 and history[-1] == history[-2]:
+        last = history[-1]
+        # 70% chance of flipping to opposite
+        if last == "HEAD":
+            outcome = "TAIL" if base < 70 else "HEAD"
+        else:
+            outcome = "HEAD" if base < 70 else "TAIL"
+    else:
+        # Normal 50/50
+        outcome = "HEAD" if base < 50 else "TAIL"
+
+    # Update history (keep last 2 only)
+    history.append(outcome)
+    user_streak[uid] = history[-2:]
+
+    return outcome
 
 # ─────────────────────────────────────────
 #  STATS HELPERS
@@ -205,7 +228,7 @@ def cmd_flip(message):
         parse_mode="Markdown",
     )
     time.sleep(5.0)
-    outcome = fair_toss()
+    outcome = fair_toss(message.from_user.id)
     record_toss(outcome)
     _edit_result(message.chat.id, msg.message_id, outcome)
 
@@ -517,4 +540,3 @@ def reopen_admin(call):
 if __name__ == "__main__":
     print("✅ Secure Coin Toss Bot is running...")
     bot.infinity_polling()
-        
