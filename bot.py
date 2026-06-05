@@ -1,6 +1,8 @@
 import os
 import time
 import secrets
+import json
+from datetime import datetime, timedelta
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -8,22 +10,50 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 #  CONFIGURATION
 # ─────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-ADMIN_ID   = int(os.environ.get("ADMIN_ID", 123456789))  # Apna Telegram Numeric ID daalein
+ADMIN_ID  = int(os.environ.get("ADMIN_ID", 123456789))  # Apna Telegram ID daalein
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Live-editable config (admin panel se change hoga)
-bot_config = {
+# ─────────────────────────────────────────
+#  DATA FILES (disk pe save hoga)
+# ─────────────────────────────────────────
+STATS_FILE  = "stats.json"
+CONFIG_FILE = "config.json"
+
+def load_json(path, default):
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except:
+        return default
+
+def save_json(path, data):
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+# Stats structure
+# {
+#   "total_users": [...user_ids...],
+#   "total_tosses": 0,
+#   "activity": {"user_id": "last_seen_iso"}
+# }
+stats = load_json(STATS_FILE, {
+    "total_users": [],
+    "total_tosses": 0,
+    "activity": {}
+})
+
+# ─────────────────────────────────────────
+#  BOT CONFIG (admin se edit hoga)
+# ─────────────────────────────────────────
+DEFAULT_CONFIG = {
     "welcome": (
         "🔥 *PREMIUM COIN TOSS BOT* 🔥\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "👋 *Assalam u Alaikum!* Khush Aamdeed!\n\n"
-        "🪙 Yeh bot *100% Cryptographic Random* engine use karta hai "
-        "taake har toss bilkul fair aur unbiased ho.\n\n"
-        "📌 *Available Commands:*\n"
-        "🔹 /start — Bot start karein\n"
-        "🔹 /flip  — Seedha coin flip karein\n"
-        "🔹 /help  — Help guide dekh\n\n"
+        "🪙 Yeh bot *100% Cryptographic Random* engine use\n"
+        "karta hai — har toss bilkul fair aur unbiased!\n\n"
+        "📌 *Command:*  /flip — Coin Toss karo\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "👨‍💻 *Developer:* @{dev}"
     ),
@@ -31,96 +61,114 @@ bot_config = {
         "ℹ️ *HELP & GUIDE*\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "⚙️ *Kaise Khelen?*\n"
-        "Bas neeche wala *FLIP COIN* button dabao.\n"
-        "System 5 second mein coin spin karega aur\n"
-        "aapko *HEAD* ya *TAIL* result dega.\n\n"
-        "🔐 *Randomness kaise kaam karta hai?*\n"
-        "Hum Python ka `secrets` module use karte hain\n"
-        "jo hardware-level entropy se random result deta hai —\n"
-        "koi manipulation possible nahi!\n\n"
-        "📌 *Commands:*\n"
-        "🔹 /start — Main menu\n"
-        "🔹 /flip  — Coin toss\n"
-        "🔹 /help  — Yeh guide\n\n"
+        "• /flip command use karo\n"
+        "• System 5 second mein coin spin karega\n"
+        "• *HEAD* ya *TAIL* result milega\n\n"
+        "🔐 *Fair Randomness:*\n"
+        "Hum Python `secrets` module use karte hain\n"
+        "jo hardware-level entropy se result deta hai —\n"
+        "koi bhi manipulation possible nahi!\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "⚡ *Powered by:* @{dev}"
     ),
     "result_title": "🏆 *TOSS RESULT* 🏆",
-    "dev_name": "supanz",
+    "dev_name": "supanz"
 }
 
-# ─────────────────────────────────────────
-#  HELPER — config text fill karna
-# ─────────────────────────────────────────
+bot_config = load_json(CONFIG_FILE, DEFAULT_CONFIG)
+# Naye keys add karo agar config file purani ho
+for k, v in DEFAULT_CONFIG.items():
+    if k not in bot_config:
+        bot_config[k] = v
+save_json(CONFIG_FILE, bot_config)
+
 def cfg(key):
     return bot_config[key].replace("{dev}", bot_config["dev_name"])
 
 # ─────────────────────────────────────────
+#  STATS HELPERS
+# ─────────────────────────────────────────
+def record_user(user_id):
+    uid = str(user_id)
+    if uid not in stats["total_users"]:
+        stats["total_users"].append(uid)
+    stats["activity"][uid] = datetime.utcnow().isoformat()
+    save_json(STATS_FILE, stats)
+
+def record_toss():
+    stats["total_tosses"] += 1
+    save_json(STATS_FILE, stats)
+
+def get_active_users_count(hours=24):
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    count = 0
+    for uid, ts in stats["activity"].items():
+        try:
+            if datetime.fromisoformat(ts) >= cutoff:
+                count += 1
+        except:
+            pass
+    return count
+
+# ─────────────────────────────────────────
 #  KEYBOARDS
 # ─────────────────────────────────────────
-def main_keyboard():
+def start_keyboard():
+    """Sirf Help button — no Toss Now button"""
     kb = InlineKeyboardMarkup(row_width=1)
-    kb.add(
-        InlineKeyboardButton("🪙  ⚡  FLIP COIN NOW  ⚡  🪙", callback_data="flip"),
-        InlineKeyboardButton("ℹ️  Help Guide",                callback_data="help"),
-    )
+    kb.add(InlineKeyboardButton("ℹ️  Help & Guide", callback_data="help"))
     return kb
 
-def back_keyboard():
+def help_back_keyboard():
     kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("⬅️  Back to Menu", callback_data="home"))
-    return kb
-
-def after_flip_keyboard():
-    kb = InlineKeyboardMarkup(row_width=1)
-    kb.add(
-        InlineKeyboardButton("🔄  Flip Again",      callback_data="flip"),
-        InlineKeyboardButton("⬅️  Back to Menu",    callback_data="home"),
-    )
+    kb.add(InlineKeyboardButton("⬅️  Back", callback_data="home"))
     return kb
 
 def admin_keyboard():
     kb = InlineKeyboardMarkup(row_width=1)
     kb.add(
-        InlineKeyboardButton("📝  Edit Welcome Message", callback_data="adm_welcome"),
-        InlineKeyboardButton("ℹ️  Edit Help Message",    callback_data="adm_help"),
-        InlineKeyboardButton("🏆  Edit Result Title",    callback_data="adm_result_title"),
-        InlineKeyboardButton("👨‍💻  Edit Developer Name",  callback_data="adm_dev_name"),
-        InlineKeyboardButton("❌  Close Panel",          callback_data="adm_close"),
+        InlineKeyboardButton("📊  Stats & Users",         callback_data="adm_stats"),
+        InlineKeyboardButton("📝  Edit Welcome Message",  callback_data="adm_welcome"),
+        InlineKeyboardButton("ℹ️  Edit Help Message",     callback_data="adm_help"),
+        InlineKeyboardButton("🏆  Edit Result Title",     callback_data="adm_result_title"),
+        InlineKeyboardButton("👨‍💻  Edit Developer Name",   callback_data="adm_dev_name"),
+        InlineKeyboardButton("🔄  Reset All Stats",       callback_data="adm_reset_stats"),
+        InlineKeyboardButton("❌  Close Panel",           callback_data="adm_close"),
+    )
+    return kb
+
+def confirm_reset_keyboard():
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton("✅ Haan, Reset Karo", callback_data="adm_reset_confirm"),
+        InlineKeyboardButton("❌ Cancel",           callback_data="adm_back"),
     )
     return kb
 
 # ─────────────────────────────────────────
-#  COMMAND HANDLERS
+#  COMMANDS
 # ─────────────────────────────────────────
 @bot.message_handler(commands=["start", "menu"])
 def cmd_start(message):
+    record_user(message.from_user.id)
     bot.send_message(
         message.chat.id,
         cfg("welcome"),
         parse_mode="Markdown",
-        reply_markup=main_keyboard(),
+        reply_markup=start_keyboard(),
     )
 
 @bot.message_handler(commands=["flip"])
 def cmd_flip(message):
-    # Seedha flip shuru — processing msg bhejo phir result
+    record_user(message.from_user.id)
     msg = bot.send_message(
         message.chat.id,
-        "⏳ *Toss In Progress... Please wait 5 seconds*",
+        "⏳ *Toss In Progress...*\n_Please wait 5 seconds_",
         parse_mode="Markdown",
     )
     time.sleep(5.0)
-    _send_result(message.chat.id, msg.message_id)
-
-@bot.message_handler(commands=["help"])
-def cmd_help(message):
-    bot.send_message(
-        message.chat.id,
-        cfg("help"),
-        parse_mode="Markdown",
-        reply_markup=back_keyboard(),
-    )
+    record_toss()
+    _edit_result(message.chat.id, msg.message_id)
 
 @bot.message_handler(commands=["admin"])
 def cmd_admin(message):
@@ -129,20 +177,15 @@ def cmd_admin(message):
         return
     bot.send_message(
         message.chat.id,
-        (
-            "⚙️ *ADMIN PANEL*\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Kisi bhi option pe click karo aur\n"
-            "naya text message mein bhejo — live update ho jayega!"
-        ),
+        "⚙️ *ADMIN PANEL*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nKoi bhi option select karo:",
         parse_mode="Markdown",
         reply_markup=admin_keyboard(),
     )
 
 # ─────────────────────────────────────────
-#  RESULT HELPER
+#  RESULT — clean, no extra buttons
 # ─────────────────────────────────────────
-def _send_result(chat_id, message_id):
+def _edit_result(chat_id, message_id):
     outcome = secrets.choice(["HEAD", "TAIL"])
     emoji   = "🟡" if outcome == "HEAD" else "⚪"
     text = (
@@ -150,18 +193,19 @@ def _send_result(chat_id, message_id):
         f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"{emoji}  *Result:*  `{outcome}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👨‍💻 *Developer:* @{bot_config['dev_name']}"
+        f"👨‍💻 *Dev:* @{bot_config['dev_name']}\n\n"
+        f"_/flip likhkar dobara toss karo_"
     )
+    # Koi button nahi — clean result only
     bot.edit_message_text(
         chat_id=chat_id,
         message_id=message_id,
         text=text,
         parse_mode="Markdown",
-        reply_markup=after_flip_keyboard(),
     )
 
 # ─────────────────────────────────────────
-#  CALLBACK HANDLER
+#  CALLBACKS
 # ─────────────────────────────────────────
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
@@ -169,13 +213,13 @@ def handle_callbacks(call):
     mid = call.message.message_id
     uid = call.from_user.id
 
-    # ── USER CALLBACKS ──────────────────
+    # ── USER ──
     if call.data == "home":
         bot.edit_message_text(
             chat_id=cid, message_id=mid,
             text=cfg("welcome"),
             parse_mode="Markdown",
-            reply_markup=main_keyboard(),
+            reply_markup=start_keyboard(),
         )
 
     elif call.data == "help":
@@ -183,84 +227,122 @@ def handle_callbacks(call):
             chat_id=cid, message_id=mid,
             text=cfg("help"),
             parse_mode="Markdown",
-            reply_markup=back_keyboard(),
+            reply_markup=help_back_keyboard(),
         )
 
-    elif call.data == "flip":
-        bot.edit_message_text(
-            chat_id=cid, message_id=mid,
-            text="⏳ *Toss In Progress... Please wait 5 seconds*",
-            parse_mode="Markdown",
-        )
-        time.sleep(5.0)
-        _send_result(cid, mid)
-
-    # ── ADMIN CALLBACKS ─────────────────
+    # ── ADMIN ──
     elif call.data.startswith("adm_"):
         if uid != ADMIN_ID:
             bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
             return
 
+        bot.answer_callback_query(call.id)
+
         if call.data == "adm_close":
             bot.delete_message(cid, mid)
-            return
 
-        key_map = {
-            "adm_welcome":      "welcome",
-            "adm_help":         "help",
-            "adm_result_title": "result_title",
-            "adm_dev_name":     "dev_name",
-        }
-        target = key_map.get(call.data)
-        if not target:
-            return
+        elif call.data == "adm_back":
+            bot.edit_message_text(
+                chat_id=cid, message_id=mid,
+                text="⚙️ *ADMIN PANEL*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nKoi bhi option select karo:",
+                parse_mode="Markdown",
+                reply_markup=admin_keyboard(),
+            )
 
-        bot.answer_callback_query(call.id)
-        prompt = bot.send_message(
-            cid,
-            f"✍️ *{target.upper()} ke liye naya text bhejo:*\n\n"
-            f"_(Welcome/Help mein `{{dev}}` likho — developer ka naam auto fill hoga)_",
-            parse_mode="Markdown",
-        )
-        bot.register_next_step_handler(prompt, _save_setting, target, cid)
+        elif call.data == "adm_stats":
+            total  = len(stats["total_users"])
+            active = get_active_users_count(24)
+            tosses = stats["total_tosses"]
+            text = (
+                "📊 *BOT STATISTICS*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"👥  *Total Users:*       `{total}`\n"
+                f"🟢  *Active (24h):*      `{active}`\n"
+                f"🪙  *Total Tosses:*      `{tosses}`\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━"
+            )
+            back_kb = InlineKeyboardMarkup()
+            back_kb.add(InlineKeyboardButton("⬅️  Back", callback_data="adm_back"))
+            bot.edit_message_text(
+                chat_id=cid, message_id=mid,
+                text=text, parse_mode="Markdown",
+                reply_markup=back_kb,
+            )
+
+        elif call.data == "adm_reset_stats":
+            bot.edit_message_text(
+                chat_id=cid, message_id=mid,
+                text="⚠️ *Kya aap sure hain?*\nSaare stats delete ho jayenge!",
+                parse_mode="Markdown",
+                reply_markup=confirm_reset_keyboard(),
+            )
+
+        elif call.data == "adm_reset_confirm":
+            stats["total_users"]  = []
+            stats["total_tosses"] = 0
+            stats["activity"]     = {}
+            save_json(STATS_FILE, stats)
+            bot.edit_message_text(
+                chat_id=cid, message_id=mid,
+                text="✅ *Stats reset ho gaye!*",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup().add(
+                    InlineKeyboardButton("⬅️  Back", callback_data="adm_back")
+                ),
+            )
+
+        else:
+            key_map = {
+                "adm_welcome":      "welcome",
+                "adm_help":         "help",
+                "adm_result_title": "result_title",
+                "adm_dev_name":     "dev_name",
+            }
+            target = key_map.get(call.data)
+            if not target:
+                return
+            prompt = bot.send_message(
+                cid,
+                f"✍️ *{target.upper()} ke liye naya text bhejo:*\n\n"
+                f"_Tip: Welcome/Help mein `{{dev}}` likho — dev naam auto fill hoga_",
+                parse_mode="Markdown",
+            )
+            bot.register_next_step_handler(prompt, _save_setting, target)
 
 # ─────────────────────────────────────────
-#  ADMIN SAVE SETTING
+#  ADMIN SAVE
 # ─────────────────────────────────────────
-def _save_setting(message, key, admin_chat_id):
+def _save_setting(message, key):
     if message.from_user.id != ADMIN_ID:
         return
     bot_config[key] = message.text
+    save_json(CONFIG_FILE, bot_config)
+    preview = message.text[:300] + ("..." if len(message.text) > 300 else "")
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("⚙️  Admin Panel", callback_data="adm_reopen"))
     bot.reply_to(
         message,
-        f"✅ *{key.upper()} successfully update ho gaya!*\n\n"
-        f"📋 *Preview:*\n{message.text[:200]}{'...' if len(message.text) > 200 else ''}",
+        f"✅ *{key.upper()} update ho gaya!*\n\n📋 *Preview:*\n{preview}",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup().add(
-            InlineKeyboardButton("⚙️ Admin Panel Wapas Kholo", callback_data="adm_reopen")
-        ),
+        reply_markup=kb,
     )
 
-# reopen admin panel via callback
 @bot.callback_query_handler(func=lambda c: c.data == "adm_reopen")
 def reopen_admin(call):
     if call.from_user.id != ADMIN_ID:
         return
+    bot.answer_callback_query(call.id)
     bot.send_message(
         call.message.chat.id,
-        (
-            "⚙️ *ADMIN PANEL*\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Kisi bhi option pe click karo aur naya text bhejo."
-        ),
+        "⚙️ *ADMIN PANEL*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nKoi bhi option select karo:",
         parse_mode="Markdown",
         reply_markup=admin_keyboard(),
     )
 
 # ─────────────────────────────────────────
-#  START BOT
+#  RUN
 # ─────────────────────────────────────────
 if __name__ == "__main__":
-    print("✅ Coin Toss Bot is running...")
+    print("✅ Secure Coin Toss Bot is running...")
     bot.infinity_polling()
-                                      
+    
